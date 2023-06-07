@@ -16,7 +16,7 @@ pdf_reader = PyPDF2.PdfReader(pdf_file)
 # check if the PDF file is encrypted
 if pdf_reader.is_encrypted:
     # ask the user for the password
-    password = "12122000"
+    password = ""
 
     # decrypt the PDF file with the password
     pdf_reader.decrypt(password)
