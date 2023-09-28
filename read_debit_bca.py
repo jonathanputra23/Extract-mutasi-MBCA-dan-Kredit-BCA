@@ -1,75 +1,95 @@
 import PyPDF2
 import re
 import pandas as pd
-from datetime import datetime
+import os
 
-current_year = datetime.now().year
-# open the PDF file you want to read
-fileName = "MutasiBCA_030523-100523.pdf"
-pdf_file = open(fileName, 'rb')
-
-# create a PDF reader object
-pdf_reader = PyPDF2.PdfReader(pdf_file)
-
-# get the number of pages in the PDF file
-num_pages = len(pdf_reader.pages)
-
-regx =  "(\d{2}\/\d{2})\s([\s\S]*?\d+)\s(DB|CR)"
-
-
-new_data = []
-# loop through all the pages in the PDF file
-for page_num in range(num_pages):
-    # get the current page
-    page = pdf_reader.pages[page_num]
-
-    # extract the text from the current page
-    page_text = page.extract_text()
-    #print(page_text)
-    matches1 = re.findall(regx, page_text)
-    for match in matches1:
-        new_list = list(s.replace("\n", "") for s in match)
-        split_str = new_list[1].split()
-        new_list = [new_list[0], ' '.join(split_str[:-1]), split_str[-1], new_list[2]]
-        #print(new_list)
-
-        if(new_list[-1]=="DB"):
-            new_data.append([new_list[0]+'/2023', new_list[1], '-'+new_list[2]])
-        else:
-            new_data.append([new_list[0]+'/2023', new_list[1], new_list[2]])
-            #new_data.append([new_list[0]+'/2023', new_list[1], "", new_list[2]])
-        
+def clean_transaction_string(transaction_text):
     """
-    lines = page_text.split('\n')  # split the string into lines
+    Clean and extract transaction details from a text.
 
-    for line in lines:
-        print(line)
-        print("====\n")
-        if re.search(regx, line):
-            new_list = line.strip().split(" ")
-            new_list = [elem for elem in new_list if elem]
-            del new_list[0]
-            date_trx = new_list[0]
-            date_trx_obj = datetime.strptime(date_trx + "-" + str(current_year), "%d-%b-%Y")
-            new_date_str = date_trx_obj.strftime("%Y-%m-%d")
+    Args:
+        transaction_text (str): The input text containing transaction details.
 
-            del new_list[0]
-            name_trx = " ".join(new_list[:-1])
-            price_trx = new_list[-1]
-            #print(date_trx)
-            #print(name_trx)
-            #print(price_trx)
-            #print('\n')
-            new_data.append([new_date_str, name_trx, price_trx])
-"""
-name_file = fileName+".xlsx"
-#print(name_file)
-df = pd.DataFrame(new_data, columns=["Date", "Note", "Amount"])
-print(df)
+    Returns:
+        str: The cleaned transaction details.
+    """
+    # Define regular expression patterns
+    date_pattern = r"^\d{4}\/\w+\/\w+\s\d+\.\d+"
+    description_pattern = r"^\d{4}\/\w+\/\w+\/"
+    description_end_pattern = r"\sTRSF\sE-BANKING\s\w+"
+    tgl_pattern = r"TGL: \d* QR \d* \d*.\d*"
+    tgl_end_pattern = r"\sTRANSAKSI\s\w*"
 
-df.to_excel(str(name_file), index=False)
-    # print the text from the current page
-    # print(page_text)
+    if re.match(date_pattern, transaction_text):
+        temp_text = re.sub(date_pattern, "", transaction_text)
+        return re.sub(description_end_pattern, "", temp_text)
+    elif re.match(description_pattern, transaction_text):
+        temp_text = re.sub(description_pattern, "", transaction_text)
+        return re.sub(description_end_pattern, "", temp_text)
+    elif re.match(tgl_pattern, transaction_text):
+        temp_text = re.sub(tgl_pattern, "", transaction_text)
+        return re.sub(tgl_end_pattern, "", temp_text)
+    else:
+        return transaction_text
 
-# close the PDF file
-pdf_file.close()
+def extract_transaction_data_from_pdf(pdf_file_path):
+    """
+    Extract transaction data from a PDF file and return as a DataFrame.
+
+    Args:
+        pdf_file_path (str): The path to the PDF file.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing transaction data.
+    """
+    pdf_file = open(pdf_file_path, 'rb')
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
+    num_pages = len(pdf_reader.pages)
+    transaction_data = []
+
+    for page_num in range(num_pages):
+        page = pdf_reader.pages[page_num]
+        page_text = page.extract_text()
+        matches = re.findall(r"(\d{2}\/\d{2})\s([\s\S]*?\d+)\s(DB|CR)", page_text)
+        
+        for match in matches:
+            new_list = list(s.replace("\n", "") for s in match)
+            split_str = new_list[1].split()
+            # Split the input date into day and month
+            day, month = new_list[0].split('/')
+
+            # Swap the day and month
+            output_date = f"{month}/{day}"
+            new_list = [output_date, ' '.join(split_str[:-1]), split_str[-1], new_list[2]]
+            print(new_list)
+            int_amount = new_list[2].replace(",", "")
+            int_amount = int(int_amount[:-3])
+
+            
+
+            if(new_list[-1]=="DB"):
+                transaction_data.append([new_list[0]+'/2023', clean_transaction_string(new_list[1]), -int_amount])
+            else:
+                transaction_data.append([new_list[0]+'/2023', clean_transaction_string(new_list[1]), int_amount])
+
+    pdf_file.close()
+    return pd.DataFrame(transaction_data, columns=["Date", "Description", "Amount"])
+
+def main():
+    folder_path = 'mutasimaretagustus'
+    files = os.listdir(folder_path)
+    all_transaction_data = []
+
+    for file in files:
+        file_path = os.path.join(folder_path, file)
+        if os.path.isfile(file_path):
+            df = extract_transaction_data_from_pdf(file_path)
+            all_transaction_data.append(df)
+
+    combined_data = pd.concat(all_transaction_data, ignore_index=True)
+    output_file_path = os.path.join(folder_path, "transactions.xlsx")
+    combined_data.to_excel(output_file_path, index=False)
+    print(f"Transaction data saved to {output_file_path}")
+
+if __name__ == "__main__":
+    main()
